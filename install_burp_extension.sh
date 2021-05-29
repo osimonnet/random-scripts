@@ -1,7 +1,10 @@
 #!/bin/bash
 
-# Example:
-# ./install_burp_extension.sh https://portswigger.net/bappstore/bapps/download/35237408a06043e9945a11016fcbac18
+if [  $# -lt 1 ]; then 
+  echo -e "Usage: $0 <BAPPSTORE_DOWNLOAD_URL>" 
+  echo -e "e.g. $0 https://portswigger.net/bappstore/bapps/download/35237408a06043e9945a11016fcbac18" 
+  exit 1
+fi 
 
 addon_url="$1"
 addon_id=$(echo $addon_url | awk -F "/" '{print $NF}')
@@ -10,34 +13,37 @@ addon_dir=~/.BurpSuite/bapps
 wget -q $addon_url -O /tmp/$addon_id.zip
 unzip -q -o /tmp/$addon_id.zip -d $addon_dir/$addon_id
 
-extension_type=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^ExtensionType:" | awk -F ": " '{print $2}')
-if [[ $extension_type -eq '1' ]]; then extension_type="java"; else extension_type="python"; fi
-if [[ $extension_type -eq 'java' ]]; then ext=".jar"; fi
-if [[ $extension_type -eq 'python' ]]; then ext=".py"; fi
+bapp_serial_version=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^SerialVersion:" | awk -F ": " '{print $2}' | sed 's/\r$//')
+bapp_uuid=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^Uuid:" | awk -F ": " '{print $2}' | sed 's/\r$//')
+extension_file=bapps/$addon_id/$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^EntryPoint:" | awk -F ": " '{print $2}' | sed 's/\r$//')
+name=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^Name:" | awk -F ": " '{print $2}' | sed 's/\r$//')
 
-bapp_serial_version=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^SerialVersion:" | awk -F ": " '{print $2}')
-bapp_uuid=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^Uuid:" | awk -F ": " '{print $2}')
-extension_file=bapps/$addon_id/$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^EntryPoint:" | awk -F ": " '{print $2}')
-name=$(cat $addon_dir/$addon_id/BappManifest.bmf | grep -E "^Name:" | awk -F ": " '{print $2}')
+if echo $extension_file | grep -qE "\.jar$"; then extension_type=java
+elif echo $extension_file | grep -qE "\.py$"; then extension_type=python
+else extension_type=ruby; fi
 
-read -r -d '' json <<- EOM
+jq --argjson sv $bapp_serial_version \
+--arg uuid "$bapp_uuid" \
+--arg ef "$extension_file" \
+--arg et "$extension_type" \
+--arg n "$name" \
+'
+.user_options.extender.extensions[.user_options.extender.extensions| length] |= . + 
 {
-  "bapp_serial_version": $bapp_serial_version,
-  "bapp_uuid": "$bapp_uuid",
+  "bapp_serial_version": $sv,
+  "bapp_uuid": $uuid,
   "errors": "ui",
-  "extension_file": "$extension_file",
-  "extension_type": "$extension_type",
+  "extension_file": $ef,
+  "extension_type": $et,
   "loaded": true,
-  "name": "$name",
+  "name": $n,
   "output": "ui"
 }
-EOM
+' \
+~/.BurpSuite/UserConfigPro.json > /tmp/int
 
-#echo $json | jq
+jq '.user_options.extender.extensions[.user_options.extender.extensions| length-1]' /tmp/int
 
-cmd=$(echo $(echo "cat ~/.BurpSuite/UserConfigPro.json | jq '.user_options.extender.extensions[.user_options.extender.extensions| length] |= . + $(echo $(echo $json))'"))
-eval "$cmd" > /tmp/int
 cp /tmp/int ~/.BurpSuite/UserConfigPro.json
 
-rm /tmp/int
-rm /tmp/$addon_id.zip
+rm /tmp/int /tmp/$addon_id.zip
